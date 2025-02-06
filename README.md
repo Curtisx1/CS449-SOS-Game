@@ -3,7 +3,7 @@
 Problem Description
 Your customer asks you to develop the software that allows a blue player to play the SOS game against a red player. Either player can be human or computer.    
 
-The game board is a grid of nn (n>2) squares. The two players take turns to add either an "S" or an "O" to an unoccupied square, with no requirement to use the same letter each turn. Each player attempts to create the straight sequence S-O-S among connected squares (diagonally, horizontally, or vertically). To keep track of who made which SOSs, a line in the player’s color (i.e., blue or red) is drawn for each SOS sequence, as shown in the following figure.
+The game board is a grid of nxn (n>2) squares. The two players take turns to add either an "S" or an "O" to an unoccupied square, with no requirement to use the same letter each turn. Each player attempts to create the straight sequence S-O-S among connected squares (diagonally, horizontally, or vertically). To keep track of who made which SOSs, a line in the player’s color (i.e., blue or red) is drawn for each SOS sequence, as shown in the following figure.
 
 ![image](https://github.com/user-attachments/assets/68fc682f-aeb9-48ad-8b51-de21cdc8ce7f)
 
