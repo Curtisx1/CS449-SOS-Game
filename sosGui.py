@@ -1,10 +1,10 @@
 from PyQt5.QtWidgets import (QMainWindow, QPushButton, 
                              QGridLayout, QWidget, QVBoxLayout, QLabel, 
                              QRadioButton, QDialog,
-                             QHBoxLayout, QSlider)
+                             QHBoxLayout, QSlider, QMessageBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPainter, QPen, QFont
-from sosGameLogic import SOSGameLogic  # Import game logic
+from sosGameLogic import SOSGameLogic
 
 class SetupWindow(QDialog):
     def __init__(self):
@@ -138,6 +138,12 @@ class SOSGame(QMainWindow):
         self.label.setFont(QFont("Arial", 16, QFont.Bold))
         self.update_label()
         self.layout.addWidget(self.label)
+        
+        # Scoreboard for tracking SOS counts
+        self.scoreboard = QLabel("")
+        self.scoreboard.setFont(QFont("Arial", 14, QFont.Bold))
+        self.update_scoreboard()  # Initialize scoreboard display
+        self.layout.addWidget(self.scoreboard)
 
         self.grid_layout = QGridLayout()
         self.buttons = [[None for _ in range(self.logic.size)] for _ in range(self.logic.size)]
@@ -159,15 +165,48 @@ class SOSGame(QMainWindow):
         self.label.setText(f"Current Player: <span style='color:{color};'>{self.logic.current_player} ({piece})</span>")
 
     def make_move(self, row, col):
-        if self.logic.make_move(row, col):
-            self.update()
+        result = self.logic.make_move(row, col)
+        # Ensure button reflects board changes
         self.buttons[row][col].setText(self.logic.board[row][col])
         self.update_label()
+        self.update_scoreboard()
+        self.update()
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setPen(QPen(Qt.blue, 2, Qt.SolidLine))
-        for (start, end) in self.logic.sos_lines:
-            x1, y1 = start[1] * (500 // self.logic.size) + 25, start[0] * (500 // self.logic.size) + 150
-            x2, y2 = end[1] * (500 // self.logic.size) + 25, end[0] * (500 // self.logic.size) + 150
-            painter.drawLine(x1, y1, x2, y2)
+        if result == "blue_wins":
+            self.show_game_over_message("Blue Wins!")
+        elif result == "red_wins":
+            self.show_game_over_message("Red Wins!")
+        elif result == "draw":
+            self.show_game_over_message("It's a draw!")
+            
+    def update_scoreboard(self):
+        """Updates the scoreboard UI."""
+        blue_score = self.logic.scores["Blue"]
+        red_score = self.logic.scores["Red"]
+        self.scoreboard.setText(f"Score - Blue: {blue_score} | Red: {red_score}")
+
+    def show_game_over_message(self, message):
+        """Displays a message box when the game ends."""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Game Over")
+        msg_box.setText(message)
+        msg_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        
+        response = msg_box.exec_()
+
+        if response == QMessageBox.Ok:
+            self.restart_game()
+        else:
+            self.close()  # Close the game window
+
+    def restart_game(self):
+        """Restarts the game by resetting the board."""
+        self.logic = SOSGameLogic(self.logic.size, self.logic.mode)
+        self.update_label()
+        
+        # Reset button text
+        for row in range(self.logic.size):
+            for col in range(self.logic.size):
+                self.buttons[row][col].setText(" ")
+        
+        self.update()  # Refreshes the UI

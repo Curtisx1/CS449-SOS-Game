@@ -138,17 +138,38 @@ class TestSetupWindow(unittest.TestCase):
         """Test start_game() with 'general' mode selection."""
         
         # Mock UI interactions
-        self.window.size_slider.setValue(12)  # Set size to 12
-        self.window.radio_general.setChecked(True)  # Choose "general" mode
+        self.window.size_slider.setValue(12)  
+        self.window.radio_general.setChecked(True) 
         
-        self.window.accept = MagicMock()  # Mock accept()
+        self.window.accept = MagicMock() 
         
         self.window.start_game()
 
         # Assertions
-        MockSOSGame.assert_called_once_with(12, "general")  # Correct game settings
+        MockSOSGame.assert_called_once_with(12, "general")  
+        MockSOSGame.return_value.show.assert_called_once() 
+        self.window.accept.assert_called_once()
+
+    @patch("sosGui.SOSGame")
+    def test_start_game_simple_mode(self, MockSOSGame):
+        """Test start_game() with 'simple' mode selection."""
+        
+        # Create a mock window (UI)
+        self.window = MagicMock()
+        self.window.size_slider.value.return_value = 10 
+        self.window.radio_simple.isChecked.return_value = True  
+        self.window.radio_advanced.isChecked.return_value = False 
+        
+        self.window.accept = MagicMock()  # Mock accept()
+        
+        # Call start_game()
+        self.window.start_game()
+        
+        # Assertions
+        MockSOSGame.assert_called_once_with(10, "simple")  # Ensure game starts with correct settings
         MockSOSGame.return_value.show.assert_called_once()  # Ensure game UI is shown
         self.window.accept.assert_called_once()  # Ensure setup window closes
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
