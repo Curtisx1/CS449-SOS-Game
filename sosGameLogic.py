@@ -207,8 +207,6 @@ class ComputerPlayer:
         )
 
         if move:
-            # ✅ Replace move's letter with valid one (not what minimax tried randomly)
             return (move[0], move[1], valid_letter)
         
         return None
-
