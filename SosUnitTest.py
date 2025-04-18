@@ -1,5 +1,5 @@
 import unittest
-from sosGameLogic import SOSGameLogic
+from sosGameLogic import SOSGameLogic, ComputerPlayer
 from sosGui import SetupWindow
 from unittest.mock import MagicMock, patch
 from PyQt5.QtWidgets import QApplication
@@ -56,6 +56,7 @@ class TestSOSGame(unittest.TestCase):
         self.game.board[0][1] = 'O'
         self.game.board[0][2] = 'O'  # Wrong pattern
         self.assertFalse(self.game.check_sos(0, 1))  # Should NOT detect SOS
+        
     def test_make_move_valid(self):
         """Test if a valid move updates the board and switches players correctly."""
         row, col = 2, 2  # Choose a valid position
@@ -170,6 +171,33 @@ class TestSetupWindow(unittest.TestCase):
         MockSOSGame.return_value.show.assert_called_once()  # Ensure game UI is shown
         self.window.accept.assert_called_once()  # Ensure setup window closes
 
+class TestComputerPlayer(unittest.TestCase):
+    def setUp(self):
+        self.game = SOSGameLogic(size=3, mode="simple")
+        self.ai = ComputerPlayer(player_color="Red")
+
+    def test_choose_move_returns_valid(self):
+        """Computer should choose a valid empty cell with correct letter."""
+        move = self.ai.choose_move(self.game)
+        self.assertIsNotNone(move, "AI should return a move")
+        
+        row, col, letter = move
+        self.assertTrue(self.game.is_valid_move(row, col), "AI move should be on an empty cell")
+        self.assertIn(letter, ["S", "O"], "AI must choose either 'S' or 'O'")
+
+    def test_ai_moves_only_once(self):
+        """Ensure the AI places only one letter on the board per move."""
+        initial_empty = sum(row.count("-") for row in self.game.board)
+        row, col, letter = self.ai.choose_move(self.game)
+        self.game.make_move(row, col, letter)
+        new_empty = sum(row.count("-") for row in self.game.board)
+        self.assertEqual(initial_empty - 1, new_empty, "AI should only place one letter")
+
+    def test_ai_does_not_choose_filled_cell(self):
+        """Ensure the AI does not choose a cell that is already filled."""
+        self.game.board[1][1] = "S"
+        move = self.ai.choose_move(self.game)
+        self.assertNotEqual((1, 1), (move[0], move[1]), "AI should avoid already filled cells")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

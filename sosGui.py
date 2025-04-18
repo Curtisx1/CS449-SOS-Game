@@ -1,10 +1,10 @@
 from PyQt5.QtWidgets import (QMainWindow, QPushButton, 
                              QGridLayout, QWidget, QVBoxLayout, QLabel, 
                              QRadioButton, QDialog,
-                             QHBoxLayout, QSlider, QMessageBox)
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPainter, QPen, QFont
-from sosGameLogic import SOSGameLogic
+                             QHBoxLayout, QSlider, QMessageBox, QButtonGroup)
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QFont
+from sosGameLogic import SOSGameLogic, ComputerPlayer
 
 class SetupWindow(QDialog):
     def __init__(self):
@@ -28,7 +28,7 @@ class SetupWindow(QDialog):
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setMinimum(3)
         self.size_slider.setMaximum(20)
-        self.size_slider.setValue(10)
+        self.size_slider.setValue(3)
         self.size_slider.setTickInterval(1)
         self.size_slider.setTickPosition(QSlider.TicksBelow)
         self.size_slider.setStyleSheet("""
@@ -52,7 +52,7 @@ class SetupWindow(QDialog):
         layout.addWidget(self.size_slider)
 
         # Dynamic Label to show selected board size
-        self.size_label = QLabel("Board Size: 10")
+        self.size_label = QLabel("Board Size: 3")
         self.size_label.setFont(QFont("Arial", 12))
         self.size_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.size_label)
@@ -68,6 +68,48 @@ class SetupWindow(QDialog):
         self.radio_simple = QRadioButton("Simple Game")
         self.radio_general = QRadioButton("General Game")
         self.radio_simple.setChecked(True)
+
+        # Player selection label
+        player_label = QLabel("Select Player Types:")
+        player_label.setFont(QFont("Arial", 12, QFont.Bold))
+        layout.addWidget(player_label)
+
+       # Blue Player selection
+        blue_layout = QHBoxLayout()
+        blue_label = QLabel("Blue Player:")
+        blue_label.setFont(QFont("Arial", 11))
+        self.blue_human = QRadioButton("Human")
+        self.blue_computer = QRadioButton("Computer")
+        self.blue_human.setChecked(True)  # Default selection
+
+        # Blue button group
+        self.blue_group = QButtonGroup(self)
+        self.blue_group.addButton(self.blue_human)
+        self.blue_group.addButton(self.blue_computer)
+
+        blue_layout.addWidget(blue_label)
+        blue_layout.addWidget(self.blue_human)
+        blue_layout.addWidget(self.blue_computer)
+        layout.addLayout(blue_layout)
+
+
+        # Red Player selection
+        red_layout = QHBoxLayout()
+        red_label = QLabel("Red Player:")
+        red_label.setFont(QFont("Arial", 11))
+        self.red_human = QRadioButton("Human")
+        self.red_computer = QRadioButton("Computer")
+        self.red_human.setChecked(True)  # Default selection
+
+        # Red button group
+        self.red_group = QButtonGroup(self)
+        self.red_group.addButton(self.red_human)
+        self.red_group.addButton(self.red_computer)
+
+        red_layout.addWidget(red_label)
+        red_layout.addWidget(self.red_human)
+        red_layout.addWidget(self.red_computer)
+        layout.addLayout(red_layout)
 
         mode_layout = QHBoxLayout()
         mode_layout.addWidget(self.radio_simple)
@@ -101,8 +143,12 @@ class SetupWindow(QDialog):
     def start_game(self):
         size = self.size_slider.value()
         mode = "simple" if self.radio_simple.isChecked() else "general"
+
+        blue_type = "computer" if self.blue_computer.isChecked() else "human"
+        red_type = "computer" if self.red_computer.isChecked() else "human"
+
         self.accept()  # Closes setup window
-        self.game = SOSGame(size, mode)
+        self.game = SOSGame(size, mode, blue_type, red_type)
         self.game.show()
 
     def center_window(self):
@@ -114,10 +160,25 @@ class SetupWindow(QDialog):
         )
 
 class SOSGame(QMainWindow):
-    def __init__(self, size=10, mode="simple"):
+    def __init__(self, size=3, mode="simple", blue_type="human", red_type="human"):
         super().__init__()
-        self.logic = SOSGameLogic(size, mode)  # Game logic instance
+
+        self.blue_type = blue_type
+        self.red_type = red_type
+
+        # Create game logic
+        self.logic = SOSGameLogic(size, mode)
+
+        # Assign computer player if selected
+        if blue_type == "computer":
+            self.logic.computer = ComputerPlayer(player_color="Blue")
+        elif red_type == "computer":
+            self.logic.computer = ComputerPlayer(player_color="Red")
+
         self.initUI()
+
+        if self.logic.computer and self.logic.current_player == self.logic.computer.player_color:
+            QTimer.singleShot(250, self.handle_computer_turn)
 
     def initUI(self):
         self.setWindowTitle(f"SOS Game ({self.logic.mode.capitalize()} Mode) - {self.logic.size}x{self.logic.size}")
@@ -166,24 +227,54 @@ class SOSGame(QMainWindow):
 
     def make_move(self, row, col):
         result = self.logic.make_move(row, col)
-        # Ensure button reflects board changes
         self.buttons[row][col].setText(self.logic.board[row][col])
         self.update_label()
         self.update_scoreboard()
-        self.update()
 
+        if result in ("blue_wins", "red_wins", "draw"):
+            self.show_game_over_message(self.get_result_message(result))
+            return
+
+        if self.logic.computer and self.logic.current_player == self.logic.computer.player_color:
+            QTimer.singleShot(500, self.handle_computer_turn)
+
+    def handle_computer_turn(self):
+        move = self.logic.computer.choose_move(self.logic)
+        if move:
+            row, col, letter = move
+            # Pass explicit letter chosen by the AI
+            result = self.logic.make_move(row, col, letter)
+
+            self.buttons[row][col].setText(self.logic.board[row][col])
+            self.update_label()
+            self.update_scoreboard()
+            self.update()
+
+            # Show result if game is over
+            if result in ("blue_wins", "red_wins", "draw"):
+                self.show_game_over_message(self.get_result_message(result))
+            else:
+                # If next player is also computer, keep going
+                if self.logic.current_player == "Blue" and self.blue_type == "computer":
+                    QTimer.singleShot(250, self.handle_computer_turn)
+                elif self.logic.current_player == "Red" and self.red_type == "computer":
+                    QTimer.singleShot(250, self.handle_computer_turn)
+
+    def get_result_message(self, result):
         if result == "blue_wins":
-            self.show_game_over_message("Blue Wins!")
+            return "Blue Wins!"
         elif result == "red_wins":
-            self.show_game_over_message("Red Wins!")
-        elif result == "draw":
-            self.show_game_over_message("It's a draw!")
+            return "Red Wins!"
+        return "It's a draw!"
             
     def update_scoreboard(self):
-        """Updates the scoreboard UI."""
-        blue_score = self.logic.scores["Blue"]
-        red_score = self.logic.scores["Red"]
-        self.scoreboard.setText(f"Score - Blue: {blue_score} | Red: {red_score}")
+        if self.logic.mode == "simple":
+            self.scoreboard.setText("")
+        else:
+            blue = self.logic.scores["Blue"]
+            red = self.logic.scores["Red"]
+            self.scoreboard.setText(f"Score - Blue: {blue} | Red: {red}")
+
 
     def show_game_over_message(self, message):
         """Displays a message box when the game ends."""
