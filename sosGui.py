@@ -1,16 +1,17 @@
-from PyQt5.QtWidgets import (QMainWindow, QPushButton, 
-                             QGridLayout, QWidget, QVBoxLayout, QLabel, 
-                             QRadioButton, QDialog,
-                             QHBoxLayout, QSlider, QMessageBox, QButtonGroup)
+from PyQt5.QtWidgets import (QMainWindow, QPushButton, QFileDialog, QAction,
+                             QGridLayout, QWidget, QVBoxLayout, QLabel,
+                             QRadioButton, QDialog, QHBoxLayout, QSlider,
+                             QMessageBox, QButtonGroup, QCheckBox)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 from sosGameLogic import SOSGameLogic, ComputerPlayer
-
+import json
+from pathlib import Path
 class SetupWindow(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Game Setup")
-        self.setFixedSize(350, 280)
+        self.setFixedSize(350, 350)
         self.setStyleSheet("""
             background-color: #f0f0f0;
             border-radius: 10px;
@@ -116,6 +117,10 @@ class SetupWindow(QDialog):
         mode_layout.addWidget(self.radio_general)
         layout.addLayout(mode_layout)
 
+        self.record_checkbox = QCheckBox("Record Game")
+        self.record_checkbox.setChecked(False)
+        layout.addWidget(self.record_checkbox, alignment=Qt.AlignCenter)
+
         # Start Game Button
         self.start_button = QPushButton("Start Game")
         self.start_button.setFont(QFont("Arial", 12, QFont.Bold))
@@ -133,6 +138,22 @@ class SetupWindow(QDialog):
         self.start_button.clicked.connect(self.start_game)
         layout.addWidget(self.start_button, alignment=Qt.AlignCenter)
 
+        self.replay_button = QPushButton("Replay Game")
+        self.replay_button.setFont(QFont("Arial", 12, QFont.Bold))
+        self.replay_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                padding: 8px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.replay_button.clicked.connect(self.replay_game)
+        layout.addWidget(self.replay_button, alignment=Qt.AlignCenter)
+
         self.setLayout(layout)
         self.center_window()
 
@@ -146,9 +167,10 @@ class SetupWindow(QDialog):
 
         blue_type = "computer" if self.blue_computer.isChecked() else "human"
         red_type = "computer" if self.red_computer.isChecked() else "human"
+        record = self.record_checkbox.isChecked()
 
-        self.accept()  # Closes setup window
-        self.game = SOSGame(size, mode, blue_type, red_type)
+        self.accept()
+        self.game = SOSGame(size, mode, blue_type, red_type, record=record)
         self.game.show()
 
     def center_window(self):
@@ -159,9 +181,76 @@ class SetupWindow(QDialog):
             screen_geometry.center().y() - self.height() // 2
         )
 
+    def replay_game(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open SOS log",
+            "logs",
+            "SOS logs (*.sos.json *.json)"
+        )
+        if not path:
+            return
+
+        self.accept()    
+        game = SOSGame()   
+        game.show()
+
+        game.is_replaying = True
+        game.logic = SOSGameLogic()
+        game.replay = SOSReplay(game.logic)
+        game.replay.load_json(path)
+        game.rebuild_board_widgets()
+
+        # lock the UI
+        for btn in game.buttons_flat:
+            btn.setEnabled(False)
+
+        # start the animated replay
+        game.replay.replay_stepwise(game.redraw_board, ms_delay=600)
+class SOSReplay:
+    def __init__(self, logic: SOSGameLogic):
+        self.logic = logic
+        self.moves = []      # list[(row,col,letter,player)]
+        self._idx = 0        # next move to apply
+        self._timer: QTimer | None = None
+
+    def load_json(self, path: str | Path):
+        self.logic.reset_board(start_logging=False)
+        with open(path, encoding="utf-8") as fp:
+            data = json.load(fp)
+        if data.get("format") != "sos-log-json-v1":
+            raise ValueError("Unrecognised log format")
+        self.logic.size = data["size"]
+        self.logic.mode = data["mode"]
+        self.logic.reset_board(start_logging=False) 
+        self.logic.reset_board()            # wipes board & scores
+        self.moves = [(m["row"], m["col"], m["letter"], m["player"])
+                      for m in data["moves"]]
+        self._idx = 0
+
+    def replay_all(self, refresh_ui):
+        for r, c, L, _ in self.moves:
+            self.logic.make_move(r, c, L)
+        refresh_ui()
+
+    def replay_stepwise(self, refresh_ui, ms_delay=800):
+        self._timer = QTimer()
+        self._timer.timeout.connect(lambda: self._step(refresh_ui))
+        self._timer.start(ms_delay)
+
+    def _step(self, refresh_ui):
+        if self._idx >= len(self.moves):
+            self._timer.stop()
+            return
+        r, c, L, _ = self.moves[self._idx]
+        self.logic.make_move(r, c, L)
+        self._idx += 1
+        refresh_ui()
 class SOSGame(QMainWindow):
-    def __init__(self, size=3, mode="simple", blue_type="human", red_type="human"):
+    def __init__(self, size=3, mode="simple", blue_type="human", red_type="human", record=False):
         super().__init__()
+
+        self.record_from_setup = record
 
         self.blue_type = blue_type
         self.red_type = red_type
@@ -177,48 +266,69 @@ class SOSGame(QMainWindow):
 
         self.initUI()
 
+        if self.record_from_setup:
+            # small delay so the window finishes drawing first
+            QTimer.singleShot(50, self.start_log_dialog)
+        else:
+            self._maybe_schedule_computer_turn()
+
+    def _maybe_schedule_computer_turn(self):
         if self.logic.computer and self.logic.current_player == self.logic.computer.player_color:
             QTimer.singleShot(250, self.handle_computer_turn)
 
     def initUI(self):
-        self.setWindowTitle(f"SOS Game ({self.logic.mode.capitalize()} Mode) - {self.logic.size}x{self.logic.size}")
+        self.setWindowTitle(
+            f"SOS Game ({self.logic.mode.capitalize()} Mode) - "
+            f"{self.logic.size}x{self.logic.size}"
+        )
         self.setGeometry(400, 400, 600, 600)
+        self.is_replaying = False 
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        
-        self.layout = QVBoxLayout()
-        
-        # Game Mode Label
-        self.mode_label = QLabel(f"<b>Game Mode: </b>{self.logic.mode.capitalize()}")
-        self.mode_label.setFont(QFont("Arial", 14))
-        self.layout.addWidget(self.mode_label)
 
-        # Player Turn Label
+        self.layout = QVBoxLayout()         
+        self.central_widget.setLayout(self.layout)
+
+        top_bar = QHBoxLayout()
+
+        self.mode_label = QLabel(
+            f"<b>Game Mode: </b>{self.logic.mode.capitalize()}"
+        )
+        self.mode_label.setFont(QFont("Arial", 14))
+        top_bar.addWidget(self.mode_label)
+
         self.label = QLabel()
         self.label.setFont(QFont("Arial", 16, QFont.Bold))
         self.update_label()
-        self.layout.addWidget(self.label)
-        
-        # Scoreboard for tracking SOS counts
+        top_bar.addWidget(self.label)
+
+        top_bar.addStretch()
+
+        self.layout.addLayout(top_bar)
+
         self.scoreboard = QLabel("")
         self.scoreboard.setFont(QFont("Arial", 14, QFont.Bold))
-        self.update_scoreboard()  # Initialize scoreboard display
+        self.update_scoreboard()
         self.layout.addWidget(self.scoreboard)
 
         self.grid_layout = QGridLayout()
-        self.buttons = [[None for _ in range(self.logic.size)] for _ in range(self.logic.size)]
-        
-        for row in range(self.logic.size):
-            for col in range(self.logic.size):
+        self.buttons = [[None for _ in range(self.logic.size)]
+                        for _ in range(self.logic.size)]
+        self.buttons_flat = []          
+
+        for r in range(self.logic.size):
+            for c in range(self.logic.size):
                 btn = QPushButton(" ")
-                btn.setFixedSize(500 // self.logic.size, 500 // self.logic.size)
-                btn.clicked.connect(lambda _, r=row, c=col: self.make_move(r, c))
-                self.grid_layout.addWidget(btn, row, col)
-                self.buttons[row][col] = btn
-        
+                btn.setFixedSize(500 // self.logic.size,
+                                500 // self.logic.size)
+                btn.clicked.connect(lambda _, rr=r, cc=c:
+                                    self.make_move(rr, cc))
+                self.grid_layout.addWidget(btn, r, c)
+                self.buttons[r][c] = btn
+                self.buttons_flat.append(btn)
+
         self.layout.addLayout(self.grid_layout)
-        self.central_widget.setLayout(self.layout)
     
     def update_label(self):
         piece = "S" if self.logic.current_player == "Blue" else "O"
@@ -275,20 +385,59 @@ class SOSGame(QMainWindow):
             red = self.logic.scores["Red"]
             self.scoreboard.setText(f"Score - Blue: {blue} | Red: {red}")
 
+    def redraw_board(self):
+        """Sync all widgets with self.logic’s current state."""
+        for r in range(self.logic.size):
+            for c in range(self.logic.size):
+                self.buttons[r][c].setText(self.logic.board[r][c])
 
-    def show_game_over_message(self, message):
-        """Displays a message box when the game ends."""
+        self.update_label()
+        self.update_scoreboard()
+        self.update()       
+
+        # Re-enable buttons once replay finishes
+        if hasattr(self, "replay") and self.replay._idx >= len(self.replay.moves):
+            for btn in self.buttons_flat:
+                btn.setEnabled(True)
+
+            if self.logic.mode == "general":
+                result_key = self.logic.determine_winner()  
+            else:  
+                last_player = self.replay.moves[-1][3]       
+                result_key = f"{last_player.lower()}_wins"
+
+            self.show_game_over_message(self.get_result_message(result_key))
+
+    def show_game_over_message(self, message: str):
+        """Game-over dialog for both live play and replay."""
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Game Over")
         msg_box.setText(message)
         msg_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-        
-        response = msg_box.exec_()
 
+        response = msg_box.exec_()      
+
+        if getattr(self, "is_replaying", False):
+            if response == QMessageBox.Ok:
+                self.is_replaying = False
+                if hasattr(self, "replay"):
+                    del self.replay
+
+                self.logic.reset_board(start_logging=True)
+                self.rebuild_board_widgets()
+
+                for btn in self.buttons_flat:
+                    btn.setEnabled(True)
+
+            else:         
+                self.close()
+
+            return 
+        
         if response == QMessageBox.Ok:
             self.restart_game()
         else:
-            self.close()  # Close the game window
+            self.close()
 
     def restart_game(self):
         """Restarts the game by resetting the board."""
@@ -300,4 +449,66 @@ class SOSGame(QMainWindow):
             for col in range(self.logic.size):
                 self.buttons[row][col].setText(" ")
         
-        self.update()  # Refreshes the UI
+        self.redraw_board()  # Refreshes the UI
+
+    def start_log_dialog(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save game log", "logs", "SOS logs (*.sos.json)")
+        if not path:
+            self.record_from_setup = False
+            self._maybe_schedule_computer_turn()
+            return
+
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.logic.start_recording(path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Logging error", str(exc))
+            self.record_from_setup = False
+
+        self._maybe_schedule_computer_turn()
+
+    def open_and_replay(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open SOS log", "logs", "SOS logs (*.sos.json *.json)")
+        if not path:
+            return
+
+        try:
+            self.is_replaying = True
+            self.logic = SOSGameLogic()
+            self.replay = SOSReplay(self.logic)
+            self.replay.load_json(path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Replay error", str(exc))
+            return
+
+        self.rebuild_board_widgets()
+
+        # lock UI during replay
+        for btn in self.buttons_flat:
+            btn.setEnabled(False)
+
+        self.replay.replay_stepwise(self.redraw_board, ms_delay=600)
+
+    def rebuild_board_widgets(self):
+        # Remove old widgets
+        for btn in self.buttons_flat:
+            self.grid_layout.removeWidget(btn)
+            btn.deleteLater()
+        self.buttons_flat.clear()
+
+        # Recreate buttons for new board size
+        self.buttons = [[None for _ in range(self.logic.size)] for _ in range(self.logic.size)]
+        for r in range(self.logic.size):
+            for c in range(self.logic.size):
+                btn = QPushButton(" ")
+                btn.setFixedSize(500 // self.logic.size, 500 // self.logic.size)
+                btn.clicked.connect(lambda _, rr=r, cc=c: self.make_move(rr, cc))
+                self.grid_layout.addWidget(btn, r, c)
+                self.buttons[r][c] = btn
+                self.buttons_flat.append(btn)
+
+        # Refresh labels
+        self.setWindowTitle(f"SOS Game ({self.logic.mode.capitalize()} Mode) - {self.logic.size}x{self.logic.size}")
+        self.redraw_board()

@@ -1,3 +1,7 @@
+from __future__ import annotations
+import json
+from pathlib import Path
+from typing import Dict, Optional
 class SOSGameLogic:
     def __init__(self, size=3, mode="simple", computer_player=None):
         self.computer = computer_player
@@ -7,6 +11,68 @@ class SOSGameLogic:
         self.current_player = "Blue"
         self.sos_lines = set()
         self.scores = {"Blue": 0, "Red": 0}
+        self.size: int = size
+        self.mode: str = mode
+
+        # live-log attributes
+        self._record_path: Optional[Path] = None
+        self._record_dict: Optional[Dict] = None
+
+        # initialise board + open first log
+        self.reset_board()
+
+    def reset_board(self, start_logging = True):
+        # clear in-memory state
+        self.board  = [["-" for _ in range(self.size)] for _ in range(self.size)]
+        self.current_player = "Blue"
+        self.sos_lines.clear()
+        self.scores = {"Blue": 0, "Red": 0}
+
+    def start_recording(self, path: str | Path):
+        """Begin writing moves to <path> (JSON). Overwrites if it exists."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)   # make sure folder exists
+        self._init_live_log(path)                       # reuse the existing helper
+
+    def stop_recording(self):
+        """Flush and close the current log (called automatically at game end)."""
+        if self._record_path:
+            self._flush_log()
+            self._record_path = None
+            self._record_dict = None
+
+    def _init_live_log(self, path: Path) -> None:
+        self._record_path = path
+        self._record_dict = {
+            "format": "sos-log-json-v1",
+            "size": self.size,
+            "mode": self.mode,
+            "moves": []
+        }
+        self._flush_log()
+
+    def _append_move(self, row: int, col: int, letter: str) -> None:
+        if self._record_dict is not None:
+            self._record_dict["moves"].append({
+                "row": row,
+                "col": col,
+                "letter": letter,
+                "player": self.current_player
+            })
+            self._flush_log()
+
+    def _flush_log(self) -> None:
+        if self._record_path and self._record_dict is not None:
+            with self._record_path.open("w", encoding="utf-8") as fp:
+                json.dump(self._record_dict, fp, indent=2)
+
+    def _finalize_if_over(self, result: str) -> str:
+        """Close the log if the game is no longer running."""
+        if result != "continue" and self._record_path:
+            self._flush_log()
+            self._record_path = None
+            self._record_dict = None
+        return result
 
     def switch_player(self):
         """Switches the current player."""
@@ -20,25 +86,27 @@ class SOSGameLogic:
         if not self.is_valid_move(row, col):
             raise ValueError(f"Invalid move at ({row}, {col})")
 
-        # Assign default letter based on current player only if none was passed in
         if letter is None:
             letter = "S" if self.current_player == "Blue" else "O"
 
         self.board[row][col] = letter
         found_sos = self.check_sos(row, col)
 
+        self._append_move(row, col, letter)
+
         if self.mode == "simple":
             if found_sos:
-                return self.current_player.lower() + "_wins"
-            elif self.is_board_full():
-                return "draw"
+                return self._finalize_if_over(
+                    f"{self.current_player.lower()}_wins"
+                )
+            if self.is_board_full():
+                return self._finalize_if_over("draw")
 
         if not found_sos:
             self.switch_player()
 
         if self.is_board_full():
-            return self.determine_winner()
-
+            return self._finalize_if_over(self.determine_winner())
         return "continue"
 
     def check_sos(self, row, col):
